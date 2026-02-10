@@ -215,6 +215,10 @@ const checkVip = async (ctx) => {
 bot.start(renderStart);
 bot.action("start_menu", renderStart);
 
+bot.command("id", (ctx) => {
+    ctx.reply(`🆔 Seu Chat ID é: \`${ctx.chat.id}\``, { parse_mode: "Markdown" });
+});
+
 // --- Admin Area ---
 bot.action("admin_panel", async (ctx) => {
     if (!isAdmin(ctx)) return ctx.answerCbQuery("Acesso negado.");

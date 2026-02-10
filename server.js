@@ -236,14 +236,25 @@ bot.action("add_instance", async (ctx) => {
     ctx.reply("⏳ Gerando QR Code...");
 
     try {
-        const res = await fetch(`${WUZAPI_BASE_URL}/instance/init?token=mass_${ctx.chat.id}`, {
-            headers: { pk: WUZAPI_ADMIN_TOKEN }
-        });
-        const data = await res.json();
+        const userToken = `mass_${ctx.chat.id}`;
 
-        if (data.qrcode) {
-            const qr = await QRCode.toBuffer(data.qrcode);
-            await ctx.replyWithPhoto({ source: qr }, {
+        // Step 1: Connect
+        const connectRes = await fetch(`${WUZAPI_BASE_URL}/session/connect`, {
+            method: "POST",
+            headers: { "token": userToken, "Content-Type": "application/json" },
+            body: JSON.stringify({ Immediate: false, Subscribe: ["Message"] })
+        });
+        await connectRes.text();
+
+        // Step 2: Get QR
+        const qrRes = await fetch(`${WUZAPI_BASE_URL}/session/qr`, {
+            headers: { "token": userToken }
+        });
+        const data = await qrRes.json();
+
+        if (data.data && data.data.QRCode) {
+            const qrBuffer = Buffer.from(data.data.QRCode.split(',')[1], 'base64');
+            await ctx.replyWithPhoto({ source: qrBuffer }, {
                 caption: "📱 *Escaneie o QR Code*\n\nAbra o WhatsApp no seu celular e escaneie este código.",
                 parse_mode: "Markdown",
                 ...Markup.inlineKeyboard([[Markup.button.callback("🔙 Voltar", "connect_instance")]])

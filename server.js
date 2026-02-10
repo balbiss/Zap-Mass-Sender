@@ -54,7 +54,12 @@ async function saveSession(chatId, s) {
 }
 
 // --- Bot Logic ---
-const isAdmin = (ctx) => ADMIN_CHAT_ID && String(ctx.chat.id) === String(ADMIN_CHAT_ID);
+const isAdmin = (ctx) => {
+    const userID = String(ctx.chat.id);
+    const adminID = String(ADMIN_CHAT_ID);
+    console.log(`🔍 Admin Check - User: ${userID} | Admin Config: ${adminID} | Match: ${userID === adminID}`);
+    return ADMIN_CHAT_ID && userID === adminID;
+};
 
 const renderStart = async (ctx) => {
     const s = await getSession(ctx.chat.id);

@@ -19,8 +19,8 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 
-const SYNCPAY_CLIENT_ID = "c2687695-57c9-4f3e-8d59-36fbdabb0a44";
-const SYNCPAY_CLIENT_SECRET = "42f39fd6-00bc-4f11-96d7-e98e4db9b93a";
+const SYNCPAY_CLIENT_ID = "35ddcafe-42a8-44e4-8714-93741e398e2a";
+const SYNCPAY_CLIENT_SECRET = "00f73c7a-922f-4f17-8e7c-e85afa6d1b0f";
 const SYNC_BASE_URL = "https://api.syncpayments.com.br";
 
 if (!TELEGRAM_TOKEN || !SUPABASE_URL || !SUPABASE_KEY) {
@@ -66,7 +66,7 @@ const renderStart = async (ctx) => {
     const cfg = await getSystemConfig();
     const isVip = s.isVip && new Date(s.subscriptionExpiry) > new Date();
 
-    let text = `🚀 *ZapMass* [V1.210]\n\n`;
+    let text = `🚀 *ZapMass* [V1.215]\n\n`;
     text += `Status: ${isVip ? "💎 VIP" : "👤 Gratuito"}\n`;
     if (isVip) text += `Validade: ${new Date(s.subscriptionExpiry).toLocaleDateString()}\n`;
     text += `Limite: ${s.maxInstances || cfg.defaultMaxInstances} dispositivo(s)`;
@@ -90,7 +90,7 @@ bot.action("start_menu", renderStart);
 bot.action("admin_panel", async (ctx) => {
     if (!isAdmin(ctx)) return;
     const cfg = await getSystemConfig();
-    ctx.editMessageText(`👑 *Admin* [V1.210]\n\nDiária: R$ ${cfg.dailyPrice.toFixed(2)}`, Markup.inlineKeyboard([
+    ctx.editMessageText(`👑 *Admin* [V1.215]\n\nDiária: R$ ${cfg.dailyPrice.toFixed(2)}`, Markup.inlineKeyboard([
         [Markup.button.callback("💰 Preço", "admin_set_price"), Markup.button.callback("👤 VIP", "admin_give_vip")],
         [Markup.button.callback("🔙 Voltar", "start_menu")]
     ]));
@@ -105,25 +105,93 @@ bot.action("my_sub", async (ctx) => {
 });
 
 bot.action(/^pay_(\d+)d$/, async (ctx) => {
-    const days = ctx.match[1], cfg = await getSystemConfig();
-    ctx.reply(`⏳ Gerando PIX...`);
-    const authRes = await fetch(`${SYNC_BASE_URL}/api/partner/v1/auth-token`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ client_id: SYNCPAY_CLIENT_ID, client_secret: SYNCPAY_CLIENT_SECRET })
-    });
-    const auth = await authRes.json();
-    const pixRes = await fetch(`${SYNC_BASE_URL}/api/partner/v1/cash-in`, {
-        method: "POST", headers: { "Authorization": `Bearer ${auth.access_token}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-            amount: cfg.dailyPrice * days, description: `ZapMass ${days}d`, external_id: `ZAPMASS_${ctx.chat.id}`,
-            client: { name: "Cliente", email: "c@z.com", cpf: "0", phone: "0" }
-        })
-    });
-    const pix = await pixRes.json();
-    if (pix.pix_code) {
-        const qr = await QRCode.toBuffer(pix.pix_code);
-        await ctx.replyWithPhoto({ source: qr }, { caption: `Copia e Cola:\n\`${pix.pix_code}\``, parse_mode: "Markdown" });
-    } else ctx.reply("Erro PIX.");
+    try {
+        const days = parseInt(ctx.match[1]);
+        const cfg = await getSystemConfig();
+        const amount = cfg.dailyPrice * days;
+
+        ctx.reply(`⏳ Gerando PIX de R$ ${amount.toFixed(2)}...`);
+        console.log(`\n💰 [PIX] Iniciando pagamento: ${days} dias x R$ ${cfg.dailyPrice} = R$ ${amount}`);
+
+        // Auth
+        console.log(`🔑 [PIX] Autenticando com SyncPay...`);
+        const authRes = await fetch(`${SYNC_BASE_URL}/api/partner/v1/auth-token`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                client_id: SYNCPAY_CLIENT_ID,
+                client_secret: SYNCPAY_CLIENT_SECRET
+            })
+        });
+
+        const authText = await authRes.text();
+        console.log(`🔑 [PIX] Auth Response [${authRes.status}]:`, authText);
+
+        let auth;
+        try {
+            auth = JSON.parse(authText);
+        } catch (e) {
+            console.error(`❌ [PIX] Erro ao parsear resposta de auth:`, e);
+            return ctx.reply("❌ Erro na autenticação do pagamento.");
+        }
+
+        if (!auth.access_token) {
+            console.error(`❌ [PIX] Token não encontrado:`, auth);
+            return ctx.reply("❌ Erro na autenticação do pagamento.");
+        }
+
+        console.log(`✅ [PIX] Autenticado com sucesso!`);
+
+        // Create PIX
+        console.log(`💳 [PIX] Criando cobrança...`);
+        const pixPayload = {
+            amount: amount,
+            description: `ZapMass ${days} dias`,
+            external_id: `ZAPMASS_${ctx.chat.id}`,
+            client: {
+                name: "Cliente ZapMass",
+                email: "cliente@zapmass.com",
+                cpf: "00000000000",
+                phone: "00000000000"
+            }
+        };
+        console.log(`💳 [PIX] Payload:`, JSON.stringify(pixPayload, null, 2));
+
+        const pixRes = await fetch(`${SYNC_BASE_URL}/api/partner/v1/cash-in`, {
+            method: "POST",
+            headers: {
+                "Authorization": `Bearer ${auth.access_token}`,
+                "Content-Type": "application/json"
+            },
+            body: JSON.stringify(pixPayload)
+        });
+
+        const pixText = await pixRes.text();
+        console.log(`💳 [PIX] Response [${pixRes.status}]:`, pixText);
+
+        let pix;
+        try {
+            pix = JSON.parse(pixText);
+        } catch (e) {
+            console.error(`❌ [PIX] Erro ao parsear resposta:`, e);
+            return ctx.reply("❌ Erro ao gerar PIX.");
+        }
+
+        if (pix.pix_code) {
+            console.log(`✅ [PIX] QR Code gerado com sucesso!`);
+            const qr = await QRCode.toBuffer(pix.pix_code);
+            await ctx.replyWithPhoto({ source: qr }, {
+                caption: `💰 *PIX - ${days} Dias*\n\nValor: R$ ${amount.toFixed(2)}\n\nCopia e Cola:\n\`${pix.pix_code}\``,
+                parse_mode: "Markdown"
+            });
+        } else {
+            console.error(`❌ [PIX] QR Code não encontrado:`, pix);
+            ctx.reply(`❌ Erro ao gerar PIX: ${pix.message || pix.error || "Desconhecido"}`);
+        }
+    } catch (e) {
+        console.error(`❌ [PIX] Exception:`, e);
+        ctx.reply("❌ Erro ao processar pagamento.");
+    }
 });
 
 bot.action("connect_instance", async (ctx) => {
@@ -140,11 +208,13 @@ bot.on("text", async (ctx) => {
     const s = await getSession(ctx.chat.id);
     if (isAdmin(ctx)) {
         if (s.stage === "ADMIN_WAIT_PRICE") {
-            const p = parseFloat(ctx.message.text);
+            const p = parseFloat(ctx.message.text.replace(",", "."));
+            if (isNaN(p)) return ctx.reply("❌ Valor inválido.");
             const cfg = await getSystemConfig(); cfg.dailyPrice = p;
             await supabase.from('bot_sessions').upsert({ chat_id: 'ZAPMASS_CONFIG', data: cfg });
             s.stage = "START"; await saveSession(ctx.chat.id, s);
-            ctx.reply("Preço alterado!"); return renderStart(ctx);
+            ctx.reply(`✅ Preço alterado para R$ ${p.toFixed(2)}`);
+            return renderStart(ctx);
         }
         if (s.stage === "ADMIN_WAIT_USER_ID") {
             const tid = ctx.message.text.trim(), ts = await getSession(tid);
@@ -152,23 +222,54 @@ bot.on("text", async (ctx) => {
             ts.subscriptionExpiry = now.toISOString();
             await saveSession(tid, ts);
             s.stage = "START"; await saveSession(ctx.chat.id, s);
-            ctx.reply("VIP 30d Ativado!"); return renderStart(ctx);
+            ctx.reply(`✅ VIP 30d ativado para ${tid}!`);
+            return renderStart(ctx);
         }
     }
 });
 
 bot.action("admin_set_price", async (ctx) => {
     const s = await getSession(ctx.chat.id); s.stage = "ADMIN_WAIT_PRICE";
-    await saveSession(ctx.chat.id, s); ctx.reply("Novo valor:");
+    await saveSession(ctx.chat.id, s); ctx.reply("Novo valor da diária:");
 });
 
 bot.action("admin_give_vip", async (ctx) => {
     const s = await getSession(ctx.chat.id); s.stage = "ADMIN_WAIT_USER_ID";
-    await saveSession(ctx.chat.id, s); ctx.reply("ID Usuário:");
+    await saveSession(ctx.chat.id, s); ctx.reply("ID do Usuário:");
+});
+
+// Webhook
+app.post("/webhook", async (req, res) => {
+    const { external_id, status, amount } = req.body;
+    console.log(`📥 [WEBHOOK] Recebido:`, { external_id, status, amount });
+
+    if ((status === "paid" || status === "approved") && external_id && external_id.startsWith("ZAPMASS_")) {
+        const cid = external_id.replace("ZAPMASS_", "");
+        const s = await getSession(cid);
+        const cfg = await getSystemConfig();
+        const days = Math.floor(amount / cfg.dailyPrice);
+
+        if (days > 0) {
+            s.isVip = true;
+            let exp = s.subscriptionExpiry ? new Date(s.subscriptionExpiry) : new Date();
+            if (exp < new Date()) exp = new Date();
+            exp.setDate(exp.getDate() + days);
+            s.subscriptionExpiry = exp.toISOString();
+            await saveSession(cid, s);
+
+            console.log(`✅ [WEBHOOK] VIP ativado para ${cid}: +${days} dias`);
+            try {
+                await bot.telegram.sendMessage(cid, `💎 *Pagamento Confirmado!*\n\n+${days} dias de acesso VIP.\nValidade: ${exp.toLocaleDateString()}`, { parse_mode: "Markdown" });
+            } catch (e) {
+                console.error(`❌ [WEBHOOK] Erro ao enviar mensagem:`, e);
+            }
+        }
+    }
+    res.sendStatus(200);
 });
 
 bot.launch().then(() => {
-    console.log(`🚀 [ZAPMASS] V1.210 - ONLINE`);
+    console.log(`🚀 [ZAPMASS] V1.215 - ONLINE`);
     bot.telegram.deleteWebhook().catch(() => { });
 });
-app.listen(PORT, () => console.log(`🌍 ZapMass [V1.210] PORT ${PORT}`));
+app.listen(PORT, () => console.log(`🌍 ZapMass [V1.215] PORT ${PORT}`));

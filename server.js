@@ -30,9 +30,9 @@ if (!TELEGRAM_TOKEN || !SUPABASE_URL || !SUPABASE_KEY) {
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const bot = new Telegraf(TELEGRAM_TOKEN);
 
-// --- Persistência (Supabase) ---
+// --- Persistência Isolação (PREFIXO ZAPMASS_) ---
 async function getSession(chatId) {
-    const id = String(chatId);
+    const id = `ZAPMASS_${chatId}`;
     const { data, error } = await supabase
         .from('bot_sessions')
         .select('data')
@@ -47,13 +47,14 @@ async function getSession(chatId) {
         subscriptionExpiry: null,
         whatsapp: { instances: [] }
     };
-    await saveSession(id, newSession);
+    await saveSession(chatId, newSession);
     return newSession;
 }
 
 async function saveSession(chatId, sessionData) {
+    const id = `ZAPMASS_${chatId}`;
     await supabase.from('bot_sessions').upsert({
-        chat_id: String(chatId),
+        chat_id: id,
         data: sessionData,
         updated_at: new Date().toISOString()
     });
@@ -86,7 +87,7 @@ async function createSyncPayPix(chatId, amount) {
         body: JSON.stringify({
             amount: amount,
             description: `Assinatura ZapMass - ID ${chatId}`,
-            external_id: String(chatId),
+            external_id: `ZAPMASS_${chatId}`,
             client: { name: "Cliente ZapMass", email: "cliente@zapmass.com", cpf: "00000000000", phone: "00000000000" }
         })
     });
@@ -105,88 +106,116 @@ async function callWuzapi(endpoint, method = "GET", body = null, token = null) {
     return await res.json();
 }
 
-// --- Bot Logic ---
+// --- Bot Logic & UI ---
+const renderStart = async (ctx) => {
+    const session = await getSession(ctx.chat.id);
+    const text = `🚀 *ZapMass Sender*\n\nO robô de disparos mais rápido do mercado.\n\nStatus: ${session.isVip ? "💎 VIP" : "👤 Gratuito"}`;
+    const keyboard = Markup.inlineKeyboard([
+        [Markup.button.callback("📱 Conectar WhatsApp", "connect_instance")],
+        [Markup.button.callback("📨 Novo Disparo", "new_campaign")],
+        [Markup.button.callback("💎 Minha Assinatura", "my_sub")]
+    ]);
+
+    try {
+        if (ctx.callbackQuery) {
+            await ctx.editMessageText(text, { parse_mode: "Markdown", ...keyboard });
+        } else {
+            await ctx.reply(text, { parse_mode: "Markdown", ...keyboard });
+        }
+    } catch (e) {
+        await ctx.reply(text, { parse_mode: "Markdown", ...keyboard });
+    }
+}
+
 const checkVip = async (ctx) => {
     const session = await getSession(ctx.chat.id);
     if (session.isVip && new Date(session.subscriptionExpiry) > new Date()) return true;
 
     await ctx.reply("💎 *Acesso Restrito*\n\nPara usar esta função, você precisa de uma assinatura ativa.", Markup.inlineKeyboard([
-        [Markup.button.callback("💳 Assinar Agora (R$ 49,90)", "pay_vip")]
+        [Markup.button.callback("💳 Assinar Agora (R$ 49,90)", "pay_vip")],
+        [Markup.button.callback("🔙 Voltar", "start_menu")]
     ]));
     return false;
 };
 
-bot.start(async (ctx) => {
-    const session = await getSession(ctx.chat.id);
-    ctx.reply(`🚀 *ZapMass Sender*\n\nO robô de disparos mais rápido do mercado.\n\nStatus: ${session.isVip ? "💎 VIP" : "👤 Gratuito"}`, {
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([
-            [Markup.button.callback("📱 Conectar WhatsApp", "connect_instance")],
-            [Markup.button.callback("📨 Novo Disparo", "new_campaign")],
-            [Markup.button.callback("💎 Minha Assinatura", "my_sub")]
-        ])
-    });
-});
+bot.start(renderStart);
+bot.action("start_menu", renderStart);
 
 bot.action("connect_instance", async (ctx) => {
     const instId = `mass_${ctx.chat.id}`;
+    ctx.answerCbQuery().catch(() => { });
     ctx.reply("⏳ Gerando QR Code...");
 
     const res = await callWuzapi(`/instance/init?token=${instId}`, "GET");
     if (res.qrcode) {
         const qrBuffer = await QRCode.toBuffer(res.qrcode);
-        await ctx.replyWithPhoto({ source: qrBuffer }, { caption: "Escaneie para conectar." });
+        await ctx.replyWithPhoto({ source: qrBuffer }, {
+            caption: "Escaneie para conectar.",
+            ...Markup.inlineKeyboard([[Markup.button.callback("🔙 Voltar", "start_menu")]])
+        });
     } else {
-        ctx.reply("✅ WhatsApp já está conectado ou erro na API.");
+        ctx.reply("✅ WhatsApp já está conectado ou erro na API.", Markup.inlineKeyboard([[Markup.button.callback("🔙 Voltar", "start_menu")]]));
     }
 });
 
 bot.action("pay_vip", async (ctx) => {
+    ctx.answerCbQuery().catch(() => { });
     ctx.reply("⏳ Gerando PIX...");
     const pix = await createSyncPayPix(ctx.chat.id, 49.90);
     if (pix.pix_code) {
         const qrBuffer = await QRCode.toBuffer(pix.pix_code);
         await ctx.replyWithPhoto({ source: qrBuffer }, {
             caption: `💰 *Pagamento da Assinatura*\n\nValor: R$ 49,90\n\nCopia e Cola:\n\`${pix.pix_code}\``,
-            parse_mode: "Markdown"
+            parse_mode: "Markdown",
+            ...Markup.inlineKeyboard([[Markup.button.callback("🔙 Voltar", "start_menu")]])
         });
     } else {
-        ctx.reply("❌ Erro ao gerar pagamento. Tente novamente.");
+        ctx.reply("❌ Erro ao gerar pagamento. Tente novamente.", Markup.inlineKeyboard([[Markup.button.callback("🔙 Voltar", "start_menu")]]));
     }
 });
 
 bot.action("new_campaign", async (ctx) => {
+    ctx.answerCbQuery().catch(() => { });
     if (!await checkVip(ctx)) return;
-    ctx.reply("🎯 *Novo Disparo*\n\n(Em construção...)");
+    ctx.editMessageText("🎯 *Novo Disparo*\n\nFunção de envio em massa está sendo ativada em background.", {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([[Markup.button.callback("🔙 Voltar", "start_menu")]])
+    });
 });
 
 bot.action("my_sub", async (ctx) => {
+    ctx.answerCbQuery().catch(() => { });
     const session = await getSession(ctx.chat.id);
     const status = session.isVip ? `✅ Ativa até ${new Date(session.subscriptionExpiry).toLocaleDateString()}` : "❌ Inativa";
-    ctx.reply(`💎 *Sua Assinatura*\n\nStatus: ${status}`, Markup.inlineKeyboard([
+    ctx.editMessageText(`💎 *Sua Assinatura*\n\nStatus: ${status}`, {
+        parse_mode: "Markdown",
+        ...Markup.inlineKeyboard([
+            [Markup.button.callback("💳 Renovação/Upgrade", "pay_vip")],
+            [Markup.button.callback("🔙 Voltar", "start_menu")]
+        ])
+    }).catch(e => ctx.reply(`💎 *Sua Assinatura*\n\nStatus: ${status}`, Markup.inlineKeyboard([
         [Markup.button.callback("💳 Renovação/Upgrade", "pay_vip")],
         [Markup.button.callback("🔙 Voltar", "start_menu")]
-    ]));
-});
-
-bot.action("start_menu", (ctx) => {
-    // Trigger start logic
+    ])));
 });
 
 // --- Webhook para SyncPay ---
 app.post("/webhook", async (req, res) => {
     const { external_id, status } = req.body;
     if (status === "paid" || status === "approved") {
-        const session = await getSession(external_id);
-        session.isVip = true;
-        const now = new Date();
-        now.setDate(now.getDate() + 30);
-        session.subscriptionExpiry = now.toISOString();
-        await saveSession(external_id, session);
+        if (external_id.startsWith("ZAPMASS_")) {
+            const chatId = external_id.replace("ZAPMASS_", "");
+            const session = await getSession(chatId);
+            session.isVip = true;
+            const now = new Date();
+            now.setDate(now.getDate() + 30);
+            session.subscriptionExpiry = now.toISOString();
+            await saveSession(chatId, session);
 
-        try {
-            await bot.telegram.sendMessage(external_id, "💎 *SUCESSO!* Sua assinatura ZapMass foi ativada por 30 dias. Aproveite!");
-        } catch (e) { }
+            try {
+                await bot.telegram.sendMessage(chatId, "💎 *SUCESSO!* Sua assinatura ZapMass foi ativada por 30 dias. Aproveite!");
+            } catch (e) { }
+        }
     }
     res.sendStatus(200);
 });

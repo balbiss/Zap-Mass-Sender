@@ -9,11 +9,11 @@ services:
     ports:
       - "8899:8899"
     command: >
-      sh -c "echo '🚀 ZapMass V1.211 Deployment...' &&
+      sh -c "echo '🚀 ZapMass V1.215 Deployment...' &&
              apk add --no-cache git &&
              rm -rf /app_tmp &&
              echo '📥 Cloning latest code...' &&
-             git clone -b main --depth 1 https://github.com/balbiss/Zap-Mass-Sender.git /app_tmp &&
+             GIT_TERMINAL_PROMPT=0 git clone -b main --depth 1 --no-single-branch https://github.com/balbiss/Zap-Mass-Sender.git /app_tmp &&
              echo '--- GIT INFO ---' &&
              cd /app_tmp && git log -1 --oneline && git rev-parse HEAD && cd /app &&
              echo '--- COPYING FILES ---' &&

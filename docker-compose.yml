@@ -9,7 +9,7 @@ services:
     ports:
       - "8899:8899"
     command: >
-      sh -c "echo '🚀 ZapMass V1.215 Deployment...' &&
+      sh -c "echo '🚀 ZapMass V1.220 Deployment...' &&
              apk add --no-cache git &&
              rm -rf /app_tmp &&
              echo '📥 Cloning latest code...' &&

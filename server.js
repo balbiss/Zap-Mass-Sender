@@ -238,19 +238,21 @@ bot.action("add_instance", async (ctx) => {
     try {
         const userToken = `mass_${ctx.chat.id}`;
 
-        // Step 1: Connect
-        const connectRes = await fetch(`${WUZAPI_BASE_URL}/session/connect`, {
-            method: "POST",
-            headers: { "token": userToken, "Content-Type": "application/json" },
-            body: JSON.stringify({ Immediate: false, Subscribe: ["Message"] })
-        });
-        await connectRes.text();
-
-        // Step 2: Get QR
+        // Get QR Code directly
         const qrRes = await fetch(`${WUZAPI_BASE_URL}/session/qr`, {
             headers: { "token": userToken }
         });
-        const data = await qrRes.json();
+
+        const qrText = await qrRes.text();
+        console.log(`📱 [WUZAPI] QR response [${qrRes.status}]:`, qrText.substring(0, 200));
+
+        let data;
+        try {
+            data = JSON.parse(qrText);
+        } catch (e) {
+            console.error(`❌ [WUZAPI] Erro ao parsear JSON:`, e);
+            return ctx.reply("❌ Erro ao conectar. Verifique se o WUZAPI está rodando.");
+        }
 
         if (data.data && data.data.QRCode) {
             const qrBuffer = Buffer.from(data.data.QRCode.split(',')[1], 'base64');

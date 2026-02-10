@@ -9,20 +9,19 @@ services:
     ports:
       - "8899:8899"
     command: >
-      sh -c "echo '🚀 Starting ZapMass v1.201 Debug Deployment...' &&
+      sh -c "echo '🚀 ZapMass V1.211 Deployment...' &&
              apk add --no-cache git &&
              rm -rf /app_tmp &&
-             git clone -b main https://github.com/balbiss/Zap-Mass-Sender.git /app_tmp &&
-             echo '--- CLONED LOG ---' &&
-             cd /app_tmp && git log -1 --oneline && cd /app &&
-             echo '--- REPLACING FILES ---' &&
+             echo '📥 Cloning latest code...' &&
+             git clone -b main --depth 1 https://github.com/balbiss/Zap-Mass-Sender.git /app_tmp &&
+             echo '--- GIT INFO ---' &&
+             cd /app_tmp && git log -1 --oneline && git rev-parse HEAD && cd /app &&
+             echo '--- COPYING FILES ---' &&
              cp -f /app_tmp/server.js ./server.js &&
              cp -f /app_tmp/package.json ./package.json &&
-             echo '--- VERIFYING FILE ---' &&
-             grep 'V1.200' server.js || echo '❌ VERSION NOT FOUND IN server.js' &&
-             echo 'Installing dependencies...' &&
+             echo '--- INSTALLING ---' &&
              npm install &&
-             echo 'Starting ZapMass...' &&
+             echo '🚀 Starting...' &&
              node server.js"
     environment:
       - TELEGRAM_TOKEN=${TELEGRAM_TOKEN}

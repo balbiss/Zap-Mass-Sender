@@ -66,7 +66,7 @@ const renderStart = async (ctx) => {
     const cfg = await getSystemConfig();
     const isVip = s.isVip && new Date(s.subscriptionExpiry) > new Date();
 
-    let text = `🚀 *ZapMass* [V1.215]\n\n`;
+    let text = `🚀 *ZapMass* [V1.220]\n\n`;
     text += `Status: ${isVip ? "💎 VIP" : "👤 Gratuito"}\n`;
     if (isVip) text += `Validade: ${new Date(s.subscriptionExpiry).toLocaleDateString()}\n`;
     text += `Limite: ${s.maxInstances || cfg.defaultMaxInstances} dispositivo(s)`;
@@ -90,7 +90,7 @@ bot.action("start_menu", renderStart);
 bot.action("admin_panel", async (ctx) => {
     if (!isAdmin(ctx)) return;
     const cfg = await getSystemConfig();
-    ctx.editMessageText(`👑 *Admin* [V1.215]\n\nDiária: R$ ${cfg.dailyPrice.toFixed(2)}`, Markup.inlineKeyboard([
+    ctx.editMessageText(`👑 *Admin* [V1.220]\n\nDiária: R$ ${cfg.dailyPrice.toFixed(2)}`, Markup.inlineKeyboard([
         [Markup.button.callback("💰 Preço", "admin_set_price"), Markup.button.callback("👤 VIP", "admin_give_vip")],
         [Markup.button.callback("🔙 Voltar", "start_menu")]
     ]));
@@ -339,7 +339,7 @@ app.post("/webhook", async (req, res) => {
 });
 
 bot.launch().then(() => {
-    console.log(`🚀 [ZAPMASS] V1.215 - ONLINE`);
+    console.log(`🚀 [ZAPMASS] V1.220 - ONLINE`);
     bot.telegram.deleteWebhook().catch(() => { });
 });
-app.listen(PORT, () => console.log(`🌍 ZapMass [V1.215] PORT ${PORT}`));
+app.listen(PORT, () => console.log(`🌍 ZapMass [V1.220] PORT ${PORT}`));

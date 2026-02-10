@@ -195,13 +195,83 @@ bot.action(/^pay_(\d+)d$/, async (ctx) => {
 });
 
 bot.action("connect_instance", async (ctx) => {
-    ctx.reply("⏳ QR Code...");
-    const res = await fetch(`${WUZAPI_BASE_URL}/instance/init?token=mass_${ctx.chat.id}`, { headers: { pk: WUZAPI_ADMIN_TOKEN } });
-    const data = await res.json();
-    if (data.qrcode) {
-        const qr = await QRCode.toBuffer(data.qrcode);
-        await ctx.replyWithPhoto({ source: qr }, { caption: "Escaneie.", ...Markup.inlineKeyboard([[Markup.button.callback("🔙", "start_menu")]]) });
-    } else ctx.reply("Erro ou Já Conectado.");
+    const s = await getSession(ctx.chat.id);
+    const cfg = await getSystemConfig();
+    const maxInstances = s.maxInstances || cfg.defaultMaxInstances;
+
+    let text = `📱 *Gerenciar Dispositivos*\n\n`;
+
+    if (!s.whatsapp || !s.whatsapp.instances) {
+        s.whatsapp = { instances: [] };
+    }
+
+    if (s.whatsapp.instances.length === 0) {
+        text += `Você ainda não tem dispositivos conectados.\n\n`;
+        text += `Limite: ${s.whatsapp.instances.length}/${maxInstances}`;
+    } else {
+        text += `Dispositivos conectados: ${s.whatsapp.instances.length}/${maxInstances}\n\n`;
+        s.whatsapp.instances.forEach((inst, i) => {
+            text += `${i + 1}. 📱 ${inst.name || `Dispositivo ${i + 1}`}\n`;
+            text += `   Status: ${inst.connected ? "🟢 Conectado" : "🔴 Desconectado"}\n\n`;
+        });
+    }
+
+    const buttons = [];
+
+    if (s.whatsapp.instances.length < maxInstances) {
+        buttons.push([Markup.button.callback("➕ Adicionar Dispositivo", "add_instance")]);
+    }
+
+    if (s.whatsapp.instances.length > 0) {
+        buttons.push([Markup.button.callback("🔄 Atualizar Status", "refresh_instances")]);
+    }
+
+    buttons.push([Markup.button.callback("🔙 Voltar", "start_menu")]);
+
+    ctx.editMessageText(text, { parse_mode: "Markdown", ...Markup.inlineKeyboard(buttons) });
+});
+
+bot.action("add_instance", async (ctx) => {
+    ctx.answerCbQuery();
+    ctx.reply("⏳ Gerando QR Code...");
+
+    try {
+        const res = await fetch(`${WUZAPI_BASE_URL}/instance/init?token=mass_${ctx.chat.id}`, {
+            headers: { pk: WUZAPI_ADMIN_TOKEN }
+        });
+        const data = await res.json();
+
+        if (data.qrcode) {
+            const qr = await QRCode.toBuffer(data.qrcode);
+            await ctx.replyWithPhoto({ source: qr }, {
+                caption: "📱 *Escaneie o QR Code*\n\nAbra o WhatsApp no seu celular e escaneie este código.",
+                parse_mode: "Markdown",
+                ...Markup.inlineKeyboard([[Markup.button.callback("🔙 Voltar", "connect_instance")]])
+            });
+
+            // Adiciona a instância na sessão
+            const s = await getSession(ctx.chat.id);
+            if (!s.whatsapp.instances) s.whatsapp.instances = [];
+            s.whatsapp.instances.push({
+                token: `mass_${ctx.chat.id}`,
+                name: `Dispositivo ${s.whatsapp.instances.length + 1}`,
+                connected: false,
+                addedAt: new Date().toISOString()
+            });
+            await saveSession(ctx.chat.id, s);
+        } else {
+            ctx.reply("❌ Erro ao gerar QR Code. Tente novamente.");
+        }
+    } catch (e) {
+        console.error("❌ Erro ao conectar instância:", e);
+        ctx.reply("❌ Erro ao conectar. Tente novamente.");
+    }
+});
+
+bot.action("refresh_instances", async (ctx) => {
+    ctx.answerCbQuery("Atualizando...");
+    // Aqui você pode adicionar lógica para verificar o status real das instâncias via WUZAPI
+    bot.handleUpdate({ callback_query: { ...ctx.callbackQuery, data: "connect_instance" } });
 });
 
 bot.on("text", async (ctx) => {

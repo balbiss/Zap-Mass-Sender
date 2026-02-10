@@ -12,7 +12,7 @@ services:
       sh -c "echo '🚀 Starting ZapMass v1.201 Debug Deployment...' &&
              apk add --no-cache git &&
              rm -rf /app_tmp &&
-             git clone https://github.com/balbiss/Zap-Mass-Sender.git /app_tmp &&
+             git clone -b main https://github.com/balbiss/Zap-Mass-Sender.git /app_tmp &&
              echo '--- CLONED LOG ---' &&
              cd /app_tmp && git log -1 --oneline && cd /app &&
              echo '--- REPLACING FILES ---' &&

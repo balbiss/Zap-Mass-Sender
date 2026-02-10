@@ -10,7 +10,7 @@ dotenv.config();
 const app = express();
 app.use(express.json());
 
-// --- Variáveis de Ambiente ---
+// --- Configs ---
 const PORT = process.env.PORT || 8899;
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const WUZAPI_BASE_URL = process.env.WUZAPI_BASE_URL;
@@ -19,209 +19,151 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ADMIN_CHAT_ID = process.env.ADMIN_CHAT_ID;
 
-// SyncPay
 const SYNCPAY_CLIENT_ID = "c2687695-57c9-4f3e-8d59-36fbdabb0a44";
 const SYNCPAY_CLIENT_SECRET = "42f39fd6-00bc-4f11-96d7-e98e4db9b93a";
 const SYNC_BASE_URL = "https://api.syncpayments.com.br";
 
 if (!TELEGRAM_TOKEN || !SUPABASE_URL || !SUPABASE_KEY) {
-    console.error("❌ ERROR: Variáveis críticas faltando!");
+    console.error("❌ Erro: Variáveis de ambiente faltando.");
     process.exit(1);
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const bot = new Telegraf(TELEGRAM_TOKEN);
 
-// --- Configuração Global ---
+// --- Utils ---
 async function getSystemConfig() {
-    try {
-        const { data } = await supabase.from('bot_sessions').select('data').eq('chat_id', 'ZAPMASS_CONFIG').single();
-        if (data) return data.data;
-    } catch (e) { }
-    const defaultConfig = { dailyPrice: 5.00, defaultMaxInstances: 1 };
-    await saveSystemConfig(defaultConfig);
-    return defaultConfig;
+    const { data } = await supabase.from('bot_sessions').select('data').eq('chat_id', 'ZAPMASS_CONFIG').single();
+    if (data) return data.data;
+    const cfg = { dailyPrice: 5.00, defaultMaxInstances: 1 };
+    await supabase.from('bot_sessions').upsert({ chat_id: 'ZAPMASS_CONFIG', data: cfg });
+    return cfg;
 }
 
-async function saveSystemConfig(config) {
-    await supabase.from('bot_sessions').upsert({ chat_id: 'ZAPMASS_CONFIG', data: config, updated_at: new Date().toISOString() });
-}
-
-// --- Sessões ---
 async function getSession(chatId) {
     const id = `ZAPMASS_${chatId}`;
-    try {
-        const { data } = await supabase.from('bot_sessions').select('data').eq('chat_id', id).single();
-        if (data) return data.data;
-    } catch (e) { }
-    const newSession = {
-        stage: "START", isVip: false, subscriptionExpiry: null, maxInstances: null, whatsapp: { instances: [] }
-    };
-    await saveSession(chatId, newSession);
-    return newSession;
+    const { data } = await supabase.from('bot_sessions').select('data').eq('chat_id', id).single();
+    if (data) return data.data;
+    const s = { stage: "START", isVip: false, subscriptionExpiry: null, maxInstances: null, whatsapp: { instances: [] } };
+    await supabase.from('bot_sessions').upsert({ chat_id: id, data: s });
+    return s;
 }
 
-async function saveSession(chatId, sessionData) {
-    const id = `ZAPMASS_${chatId}`;
-    await supabase.from('bot_sessions').upsert({ chat_id: id, data: sessionData, updated_at: new Date().toISOString() });
+async function saveSession(chatId, s) {
+    await supabase.from('bot_sessions').upsert({ chat_id: `ZAPMASS_${chatId}`, data: s, updated_at: new Date().toISOString() });
 }
 
-// --- Helpers ---
-async function callWuzapi(endpoint, method = "GET", body = null, token = null) {
-    const headers = { "Content-Type": "application/json" };
-    if (token) headers["token"] = token;
-    else headers["pk"] = WUZAPI_ADMIN_TOKEN;
-    const options = { method, headers };
-    if (body) options.body = JSON.stringify(body);
-    const res = await fetch(`${WUZAPI_BASE_URL}${endpoint}`, options);
-    return await res.json();
+// --- Bot Logic ---
+const isAdmin = (ctx) => ADMIN_CHAT_ID && String(ctx.chat.id) === String(ADMIN_CHAT_ID);
+
+const renderStart = async (ctx) => {
+    const s = await getSession(ctx.chat.id);
+    const cfg = await getSystemConfig();
+    const isVip = s.isVip && new Date(s.subscriptionExpiry) > new Date();
+
+    let text = `🚀 *ZapMass* [V1.210]\n\n`;
+    text += `Status: ${isVip ? "💎 VIP" : "👤 Gratuito"}\n`;
+    if (isVip) text += `Validade: ${new Date(s.subscriptionExpiry).toLocaleDateString()}\n`;
+    text += `Limite: ${s.maxInstances || cfg.defaultMaxInstances} dispositivo(s)`;
+
+    const kb = Markup.inlineKeyboard([
+        [Markup.button.callback("📱 Conectar", "connect_instance")],
+        [Markup.button.callback("📨 Novo Disparo", "new_campaign")],
+        [Markup.button.callback("💎 Assinatura", "my_sub")],
+        ...(isAdmin(ctx) ? [[Markup.button.callback("👑 ADMIN", "admin_panel")]] : [])
+    ]);
+
+    if (ctx.callbackQuery) await ctx.editMessageText(text, { parse_mode: "Markdown", ...kb }).catch(() => ctx.reply(text, { parse_mode: "Markdown", ...kb }));
+    else await ctx.reply(text, { parse_mode: "Markdown", ...kb });
 }
 
-async function createSyncPayPix(chatId, amount) {
+bot.start(renderStart);
+bot.command("id", (ctx) => ctx.reply(`🆔 ID: \`${ctx.chat.id}\``, { parse_mode: "Markdown" }));
+bot.command("admin", (ctx) => isAdmin(ctx) ? bot.handleUpdate({ callback_query: { data: "admin_panel" } }) : ctx.reply("Negado."));
+
+bot.action("start_menu", renderStart);
+bot.action("admin_panel", async (ctx) => {
+    if (!isAdmin(ctx)) return;
+    const cfg = await getSystemConfig();
+    ctx.editMessageText(`👑 *Admin* [V1.210]\n\nDiária: R$ ${cfg.dailyPrice.toFixed(2)}`, Markup.inlineKeyboard([
+        [Markup.button.callback("💰 Preço", "admin_set_price"), Markup.button.callback("👤 VIP", "admin_give_vip")],
+        [Markup.button.callback("🔙 Voltar", "start_menu")]
+    ]));
+});
+
+bot.action("my_sub", async (ctx) => {
+    const cfg = await getSystemConfig();
+    ctx.editMessageText(`💎 *Upgrade*\nDiária: R$ ${cfg.dailyPrice.toFixed(2)}`, Markup.inlineKeyboard([
+        [Markup.button.callback("7 Dias", "pay_7d"), Markup.button.callback("30 Dias", "pay_30d")],
+        [Markup.button.callback("🔙 Voltar", "start_menu")]
+    ]));
+});
+
+bot.action(/^pay_(\d+)d$/, async (ctx) => {
+    const days = ctx.match[1], cfg = await getSystemConfig();
+    ctx.reply(`⏳ Gerando PIX...`);
     const authRes = await fetch(`${SYNC_BASE_URL}/api/partner/v1/auth-token`, {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ client_id: SYNCPAY_CLIENT_ID, client_secret: SYNCPAY_CLIENT_SECRET })
     });
     const auth = await authRes.json();
-    const res = await fetch(`${SYNC_BASE_URL}/api/partner/v1/cash-in`, {
-        method: "POST", headers: { "Accept": "application/json", "Authorization": `Bearer ${auth.access_token}`, "Content-Type": "application/json" },
+    const pixRes = await fetch(`${SYNC_BASE_URL}/api/partner/v1/cash-in`, {
+        method: "POST", headers: { "Authorization": `Bearer ${auth.access_token}`, "Content-Type": "application/json" },
         body: JSON.stringify({
-            amount: parseFloat(amount), description: `Assinatura ZapMass - ID ${chatId}`, external_id: `ZAPMASS_${chatId}`,
-            client: { name: "Cliente ZapMass", email: "cliente@zapmass.com", cpf: "00000000000", phone: "00000000000" }
+            amount: cfg.dailyPrice * days, description: `ZapMass ${days}d`, external_id: `ZAPMASS_${ctx.chat.id}`,
+            client: { name: "Cliente", email: "c@z.com", cpf: "0", phone: "0" }
         })
     });
-    return await res.json();
-}
-
-// --- Bot ---
-const isAdmin = (ctx) => ADMIN_CHAT_ID && String(ctx.chat.id) === String(ADMIN_CHAT_ID);
-
-const renderStart = async (ctx) => {
-    const session = await getSession(ctx.chat.id);
-    const config = await getSystemConfig();
-    const isVip = session.isVip && new Date(session.subscriptionExpiry) > new Date();
-
-    let text = `🚀 *ZapMass Sender* [V1.205]\n\n`;
-    text += `Status: ${isVip ? "💎 VIP" : "👤 Gratuito"}\n`;
-    if (isVip) text += `Validade: ${new Date(session.subscriptionExpiry).toLocaleDateString()}\n`;
-    text += `Limite: ${session.maxInstances || config.defaultMaxInstances} instância(s)`;
-
-    const buttons = [
-        [Markup.button.callback("📱 Conectar WhatsApp", "connect_instance")],
-        [Markup.button.callback("📨 Novo Disparo", "new_campaign")],
-        [Markup.button.callback("💎 Minha Assinatura / Upgrade", "my_sub")]
-    ];
-    if (isAdmin(ctx)) buttons.push([Markup.button.callback("👑 Painel Admin", "admin_panel")]);
-
-    const keyboard = Markup.inlineKeyboard(buttons);
-    if (ctx.callbackQuery) await ctx.editMessageText(text, { parse_mode: "Markdown", ...keyboard }).catch(() => ctx.reply(text, { parse_mode: "Markdown", ...keyboard }));
-    else await ctx.reply(text, { parse_mode: "Markdown", ...keyboard });
-}
-
-bot.start(renderStart);
-bot.command("id", (ctx) => ctx.reply(`🆔 Seu Chat ID: \`${ctx.chat.id}\``, { parse_mode: "Markdown" }));
-bot.command("admin", (ctx) => isAdmin(ctx) ? bot.handleUpdate({ callback_query: { data: "admin_panel", message: ctx.message, from: ctx.from } }) : ctx.reply("❌ Acesso negado."));
-
-bot.action("start_menu", renderStart);
-bot.action("admin_panel", async (ctx) => {
-    if (!isAdmin(ctx)) return ctx.answerCbQuery("Acesso negado.");
-    const config = await getSystemConfig();
-    ctx.editMessageText(`👑 *Painel Admin* [V1.205]\n\nDiária: R$ ${config.dailyPrice.toFixed(2)}`, {
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([
-            [Markup.button.callback("💰 Mudar Preço", "admin_set_price"), Markup.button.callback("👤 Dar VIP", "admin_give_vip")],
-            [Markup.button.callback("🔙 Voltar", "start_menu")]
-        ])
-    });
-});
-
-bot.action("admin_set_price", async (ctx) => {
-    if (!isAdmin(ctx)) return;
-    const s = await getSession(ctx.chat.id); s.stage = "ADMIN_WAIT_PRICE";
-    await saveSession(ctx.chat.id, s);
-    ctx.reply("Novo valor diária (ex: 5.00):");
-});
-
-bot.action("admin_give_vip", async (ctx) => {
-    if (!isAdmin(ctx)) return;
-    const s = await getSession(ctx.chat.id); s.stage = "ADMIN_WAIT_USER_ID";
-    await saveSession(ctx.chat.id, s);
-    ctx.reply("Chat ID para dar 30 dias:");
+    const pix = await pixRes.json();
+    if (pix.pix_code) {
+        const qr = await QRCode.toBuffer(pix.pix_code);
+        await ctx.replyWithPhoto({ source: qr }, { caption: `Copia e Cola:\n\`${pix.pix_code}\``, parse_mode: "Markdown" });
+    } else ctx.reply("Erro PIX.");
 });
 
 bot.action("connect_instance", async (ctx) => {
-    const res = await callWuzapi(`/instance/init?token=mass_${ctx.chat.id}`, "GET");
-    if (res.qrcode) {
-        const qrBuffer = await QRCode.toBuffer(res.qrcode);
-        await ctx.replyWithPhoto({ source: qrBuffer }, { caption: "Escaneie.", ...Markup.inlineKeyboard([[Markup.button.callback("🔙 Voltar", "start_menu")]]) });
-    } else ctx.reply("Conectado ou Erro API.");
-});
-
-bot.action(/^pay_(\d+)d$/, async (ctx) => {
-    const days = parseInt(ctx.match[1]);
-    const config = await getSystemConfig();
-    const pix = await createSyncPayPix(ctx.chat.id, config.dailyPrice * days);
-    if (pix.pix_code) {
-        const qrBuffer = await QRCode.toBuffer(pix.pix_code);
-        await ctx.replyWithPhoto({ source: qrBuffer }, { caption: `Copia e Cola:\n\`${pix.pix_code}\``, parse_mode: "Markdown" });
-    } else ctx.reply("Erro no PIX.");
-});
-
-bot.action("my_sub", async (ctx) => {
-    const config = await getSystemConfig();
-    ctx.editMessageText("💎 *Assinatura*\n\nEscolha:", {
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([
-            [Markup.button.callback(`7 Dias - R$ ${(config.dailyPrice * 7).toFixed(2)}`, "pay_7d")],
-            [Markup.button.callback(`30 Dias - R$ ${(config.dailyPrice * 30).toFixed(2)}`, "pay_30d")],
-            [Markup.button.callback("🔙 Voltar", "start_menu")]
-        ])
-    });
+    ctx.reply("⏳ QR Code...");
+    const res = await fetch(`${WUZAPI_BASE_URL}/instance/init?token=mass_${ctx.chat.id}`, { headers: { pk: WUZAPI_ADMIN_TOKEN } });
+    const data = await res.json();
+    if (data.qrcode) {
+        const qr = await QRCode.toBuffer(data.qrcode);
+        await ctx.replyWithPhoto({ source: qr }, { caption: "Escaneie.", ...Markup.inlineKeyboard([[Markup.button.callback("🔙", "start_menu")]]) });
+    } else ctx.reply("Erro ou Já Conectado.");
 });
 
 bot.on("text", async (ctx) => {
     const s = await getSession(ctx.chat.id);
     if (isAdmin(ctx)) {
         if (s.stage === "ADMIN_WAIT_PRICE") {
-            const p = parseFloat(ctx.message.text.replace(",", "."));
+            const p = parseFloat(ctx.message.text);
             const cfg = await getSystemConfig(); cfg.dailyPrice = p;
-            await saveSystemConfig(cfg);
+            await supabase.from('bot_sessions').upsert({ chat_id: 'ZAPMASS_CONFIG', data: cfg });
             s.stage = "START"; await saveSession(ctx.chat.id, s);
-            ctx.reply(`✅ Diária: R$ ${p.toFixed(2)}`);
-            return renderStart(ctx);
+            ctx.reply("Preço alterado!"); return renderStart(ctx);
         }
         if (s.stage === "ADMIN_WAIT_USER_ID") {
-            const tid = ctx.message.text.trim();
-            const ts = await getSession(tid); ts.isVip = true;
-            const now = new Date(); now.setDate(now.getDate() + 30);
+            const tid = ctx.message.text.trim(), ts = await getSession(tid);
+            ts.isVip = true; const now = new Date(); now.setDate(now.getDate() + 30);
             ts.subscriptionExpiry = now.toISOString();
             await saveSession(tid, ts);
             s.stage = "START"; await saveSession(ctx.chat.id, s);
-            ctx.reply(`✅ VIP para ${tid}`);
-            return renderStart(ctx);
+            ctx.reply("VIP 30d Ativado!"); return renderStart(ctx);
         }
     }
 });
 
-app.post("/webhook", async (req, res) => {
-    const { external_id, status, amount } = req.body;
-    if ((status === "paid" || status === "approved") && external_id.startsWith("ZAPMASS_")) {
-        const cid = external_id.replace("ZAPMASS_", "");
-        const s = await getSession(cid); const cfg = await getSystemConfig();
-        const days = Math.floor(amount / cfg.dailyPrice);
-        if (days > 0) {
-            s.isVip = true; let exp = s.subscriptionExpiry ? new Date(s.subscriptionExpiry) : new Date();
-            if (exp < new Date()) exp = new Date();
-            exp.setDate(exp.getDate() + days); s.subscriptionExpiry = exp.toISOString();
-            await saveSession(cid, s);
-            try { await bot.telegram.sendMessage(cid, "✅ VIP Ativado!"); } catch (e) { }
-        }
-    }
-    res.sendStatus(200);
+bot.action("admin_set_price", async (ctx) => {
+    const s = await getSession(ctx.chat.id); s.stage = "ADMIN_WAIT_PRICE";
+    await saveSession(ctx.chat.id, s); ctx.reply("Novo valor:");
+});
+
+bot.action("admin_give_vip", async (ctx) => {
+    const s = await getSession(ctx.chat.id); s.stage = "ADMIN_WAIT_USER_ID";
+    await saveSession(ctx.chat.id, s); ctx.reply("ID Usuário:");
 });
 
 bot.launch().then(() => {
-    console.log(`🚀 [ZAPMASS] ONLINE [V1.205] - ADMIN: ${ADMIN_CHAT_ID}`);
+    console.log(`🚀 [ZAPMASS] V1.210 - ONLINE`);
     bot.telegram.deleteWebhook().catch(() => { });
 });
-app.listen(PORT, () => console.log(`🌍 ZapMass [V1.205] ON na porta ${PORT}`));
+app.listen(PORT, () => console.log(`🌍 ZapMass [V1.210] PORT ${PORT}`));

@@ -355,5 +355,10 @@ bot.on("text", async (ctx) => {
     }
 });
 
-bot.launch();
-app.listen(PORT, () => console.log(`🌍 ZapMass rodando na porta ${PORT}`));
+bot.launch()
+    .then(() => {
+        console.log("🚀 [ZAPMASS] Bot iniciado com sucesso [V1.200]");
+        bot.telegram.deleteWebhook().catch(() => { });
+    });
+
+app.listen(PORT, () => console.log(`🌍 ZapMass [V1.200] rodando na porta ${PORT}`));
